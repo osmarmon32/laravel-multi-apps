@@ -1,0 +1,32 @@
+{
+    "name": "reddireccion/laravel-multiapps",
+    "description": "Run multple laravel applications using the same instance",
+    "type": "laravel-package",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Oscar Mendoza",
+            "email": "osmarmon32@gmail.com"
+        }
+    ],
+    "minimum-stability": "dev",
+    "require": {}
+	
+	//To autoload provider in project
+    "extra": {
+        "laravel": {
+            "providers": [
+                "reddireccion\\multiapps\\MultiAppServiceProvider"
+            ]
+        }
+        /*"aliases": {
+            "Debugbar": "Barryvdh\\Debugbar\\Facade"
+        }*/
+    },
+    "autoload": {
+        "psr-4": {
+            "Reddireccion\\MultiApps\\": "src/"
+        }
+    }
+	
+}
