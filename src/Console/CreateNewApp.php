@@ -18,8 +18,9 @@ use Str;
  */
 class CreateNewApp extends Command
 {
-    protected  $connection="";
-    protected  $prefix="";
+    protected $connection="";
+    protected $prefix="";
+    protected $appName="";
     /**
      * The name and signature of the console command.
      *
@@ -45,63 +46,229 @@ class CreateNewApp extends Command
     }
 
     /**
+     * copy public folder and add entry point to index file
+     *
+     * @return void
+     */
+    protected function copyPublicFolder(){
+        $this->recurse_copy(base_path('public'),base_path('public_'.$this->appName));
+        $newIndexPath = base_path('public_'.$this->appName.'/index.php');
+        $content = File::get($newIndexPath);
+        $idx = strpos($content,'define');
+        $content = substr_replace($content, "define('MULTI_APP_NAME','".$this->appName."');\n", $idx,0);
+        $content = str_replace('app.php', $this->appName.'.php', $content);
+        File::put($newIndexPath,$content);
+    }
+
+    /**
+     * add namespace to composer
+     *
+     * @return void
+     */
+    protected function addComposerNamespace(){
+        $composerPath = base_path('composer.json');
+        $content =File::get($composerPath);
+        $idx=strpos($content,'"App\\');
+        $content = substr_replace($content, "\"".Str::studly($this->appName)."\\\\\": \"".$this->appName."/\",\n\t\t\t", $idx,0);
+        File::put($composerPath,$content);
+    }
+
+    /**
+     * copy app folder and rename references to namespace
+     *
+     * @return void
+     */
+    protected function copyAppFolder(){
+        $newAppPath=base_path($this->appName);
+        $this->recurse_copy(base_path('app'),$newAppPath);
+        $this->renameInDirectory($newAppPath,$this->appName);        
+        $this->addCustomKernelBoostrappers($newAppPath,$this->appName);
+    }
+
+    /**
+     * Add custom boostrappers in HTTP and Console Kernel files
+     *
+     * @param string $appPath path to the app folder
+     * @param string $appName name of the new app to be used as namespece
+     * @return void
+     */
+    protected function addCustomKernelBoostrappers($appPath,$appName){
+        $content = File::get($appPath.'/Http/Kernel.php');
+        $idx = strrpos($content,'];');
+        $replace = <<<'EOT'
+];
+    
+    /**
+     * The bootstrap classes for the application.
+     *
+     * @var array
+     */
+    protected $bootstrappers = [
+        \Illuminate\Foundation\Bootstrap\LoadEnvironmentVariables::class,
+        \Illuminate\Foundation\Bootstrap\LoadConfiguration::class,
+        \Illuminate\Foundation\Bootstrap\HandleExceptions::class,
+        \Reddireccion\MultiApps\Foundation\RegisterFacades::class,
+        \Illuminate\Foundation\Bootstrap\RegisterProviders::class,
+        \Illuminate\Foundation\Bootstrap\BootProviders::class,
+    ];
+EOT;
+        $content=substr_replace($content, $replace,$idx,0);
+        File::put($appPath.'/Http/Kernel.php');
+        $content = File::get($appPath.'/Console/Kernel.php');
+        $idx = strrpos($content,'];');
+        $replace = <<<'EOT'
+];
+
+    /**
+     * The bootstrap classes for the application.
+     *
+     * @var array
+     */
+    protected $bootstrappers = [
+        \Illuminate\Foundation\Bootstrap\LoadEnvironmentVariables::class,
+        \Illuminate\Foundation\Bootstrap\LoadConfiguration::class,
+        \Illuminate\Foundation\Bootstrap\HandleExceptions::class,
+        \Reddireccion\MultiApps\Foundation\RegisterFacades::class,
+        \Illuminate\Foundation\Bootstrap\SetRequestForConsole::class,
+        \Illuminate\Foundation\Bootstrap\RegisterProviders::class,
+        \Illuminate\Foundation\Bootstrap\BootProviders::class,
+    ];
+EOT;
+        $content=substr_replace($content, $replace,$idx,0);
+        File::put($appPath.'/Console/Kernel.php');
+    }
+
+    /**
+     * copy boostrap file and rename references to namespace
+     *
+     * @return void
+     */
+    protected function copyBoostrapFile(){
+        $boostrapNewPath=base_path('bootstrap\\'.$this->appName.'.php');
+        copy(base_path('bootstrap\\app.php'),$boostrapNewPath);
+
+        $content=str_replace('App\\',Str::studly($this->appName).'\\',File::get($boostrapNewPath));
+        $content=str_replace('App;',Str::studly($this->appName).';',$content);
+        $content=str_replace('Illuminate\\Foundation\\Application','\\Reddireccion\\MultiApps\\Foundation\\Application',$content);
+        File::put($boostrapNewPath,$content);
+        $this->renameInFile($boostrapNewPath,$this->appName);
+
+    }
+
+    /**
+     * copy artisan file, define entry point and rename reference to boostrap file
+     *
+     * @return void
+     */
+    protected function copyArtisanFile(){
+        $artisanPath = base_path('artisan');
+        $content = File::get($artisanPath);
+        $idx = strpos($content, 'MULTI_APP_NAME');
+        if($idx<0){
+            $idx = strpos($content,'define');
+            $content = substr_replace($content, "define('MULTI_APP_NAME','');", $idx,0);
+            File::put($artisanPath,$content);
+        }
+
+        $newArtisanPath = base_path('artisan_'.$this->appName.'');
+        copy(base_path('artisan'),$newArtisanPath);
+        $content = File::get($newArtisanPath);
+        $idx = strpos($content,'define');
+        $content = str_replace("define('MULTI_APP_NAME','');", "define('MULTI_APP_NAME','".$this->appName."');", $content);
+        $content = str_replace('app.php', $this->appName.'.php', $content);
+        File::put($newArtisanPath,$content);        
+    }
+
+    /**
+     * Copy storage folder for new app
+     *
+     * @return void
+     */
+    protected function copyStorageFolder(){
+        $this->recurse_copy(base_path('storage/app'),base_path('storage/'.$this->appName));
+    }
+
+    /**
+     * use entry point to reference for file system paths
+     *
+     * @return void
+     */
+    protected function updateFileSystemReferences(){
+        $fileSystemConfigPath = base_path('config/filesystems.php');
+        $content = File::get($fileSystemConfigPath);
+        $content= str_replace("storage_path('app", "storage_path(MULTI_APP_NAME.'", $content);
+        $content= str_replace("env('", "env(MULTI_APP_NAME.'_", $content);
+        File::put($fileSystemConfigPath,$content);
+    }
+
+    /**
+     * create new app config file and rename references to namespace and to env variables
+     *
+     * @return void
+     */
+    protected function createAppConfigFile(){
+        $newAppConfig = base_path('config/'.$this->appName.'.php');
+        copy(base_path('config/app.php'),$newAppConfig);
+        $content = File::get($newAppConfig);
+        $content=str_replace("env('", "env(MULTI_APP_NAME.'_", $content);
+        $content=str_replace("App\\", Str::studly($this->appName)."\\", $content);
+        File::put($newAppConfig,$content);
+    }
+
+    /**
+     * rename references to env variables in session file.
+     *
+     * @return void
+     */
+    protected function updateSessionFileReferences(){
+        $sessionConfigFile = base_path('config/session.php');
+        $content = File::get($sessionConfigFile);
+        $content=str_replace("env('", "env(MULTI_APP_NAME.'_", $content);
+        File::put($sessionConfigFile,$content);
+    }
+
+    /**
+     * rename references to env variables in database file.
+     *
+     * @return void
+     */
+    protected function updateDatabaseFileReferences(){
+        $databaseConfigFile = base_path('config/database.php');
+        $content = File::get($databaseConfigFile);
+        $content=str_replace("env('", "env(MULTI_APP_NAME.'_", $content);
+        File::put($databaseConfigFile,$content);
+    }
+
+    /**
+     * create a subfolder in migrations with the name of the app
+     *
+     * @return void
+     */
+    protected function createMigrationsFolder(){
+        File::makeDirectory(base_path('database/'.MULTI_APP_NAME));
+    }
+
+
+
+    /**
      * Execute the console command.
      *
      * @return mixed
      */
     public function handle()
     {
-        $appName = $this->argument('appName');
-        //copy public folder and add entry point to index file
-        $this->recurse_copy(base_path('public'),base_path('public_'.$appName));
-        $newIndexPath = base_path('public_'.$appName.'/index.php');
-        $content = File::get($newIndexPath);
-        $idx = strpos($content,'define');
-        $content = substr_replace($content, "define('MULTI_APP_NAME','".$appName."');\n", $idx,0);
-        File::put($newIndexPath,$content);
-        //add namespace to composer
-        $composerPath = base_path('composer.json');
-        $content =File::get($composerPath);
-        $idx=strpos($content,'"App\\');
-        $content = substr_replace($content, "\"".Str::studly($appName)."\\\\\": \"".$appName."/\",\n\t\t\t", $idx,0);
-        File::put($composerPath,$content);
-        //copy app folder and rename references to namespace
-        $this->recurse_copy(base_path('app'),base_path($appName));
-        $this->renameInDirectory(base_path($appName),$appName);
-        //copy boostrap file and rename references to namespace
-        $boostrapNewPath=base_path('bootstrap\\'.$appName.'.php');
-        copy(base_path('bootstrap\\app.php'),$boostrapNewPath);
-        $this->renameInFile($boostrapNewPath,$appName);
-        //copy artisan file, define entry point and rename reference to boostrap file
-        $newArtisanPath = base_path('artisan_'.$appName.'');
-        copy(base_path('artisan'),$newArtisanPath);
-        $content = File::get($newArtisanPath);
-        $idx = strpos($content,'define');
-        $content = substr_replace($content, "define('MULTI_APP_NAME','".$appName."');", $idx,0);
-        $content = str_replace('app.php', $appName.'.php', $content);
-        File::put($newArtisanPath,$content);
-        //Copy storage folder for new app
-        $this->recurse_copy(base_path('storage/app'),base_path('storage/'.$appName));
-        //use entry point to reference for file system paths
-        $fileSystemConfigPath = base_path('config/filesystems.php');
-        $content = File::get($fileSystemConfigPath);
-        $content= str_replace("storage_path('app", "storage_path(MULTI_APP_NAME.'", $content);
-        $content= str_replace("env('", "env(MULTI_APP_NAME.'_", $content);
-        File::put($fileSystemConfigPath,$content);
-        //create new app config file and rename references to namespace and to env variables
-        $newAppConfig = base_path('config/'.$appName.'.php');
-        copy(base_path('config/app.php'),$newAppConfig);
-        $content = File::get($newAppConfig);
-        $content=str_replace("env('", "env(MULTI_APP_NAME.'_", $content);
-        $content=str_replace("App\\", Str::studly($appName)."\\", $content);
-        File::put($newAppConfig,$content);
-        //rename references to env variables in session file.
-        //TODO
-        $sessionConfigFile = base_path('config/session.php');
-        $content = File::get($sessionConfigFile);
-        $content=str_replace("env('", "env(MULTI_APP_NAME.'_", $content);
-        File::put($sessionConfigFile,$content);
-
+        $this->appName = $this->argument('appName');
+        $this->copyPublicFolder();
+        $this->addComposerNamespace();
+        $this->copyAppFolder();
+        $this->copyBoostrapFile();
+        $this->copyArtisanFile();
+        $this->copyStorageFolder();
+        $this->updateFileSystemReferences();
+        $this->createAppConfigFile();
+        $this->updateSessionFileReferences();
+        $this->updateDatabaseFileReferences();
+        $this->createMigrationsFolder();
 
         $this->line('Ready.');
     }
